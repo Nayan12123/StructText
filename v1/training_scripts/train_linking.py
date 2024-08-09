@@ -9,14 +9,16 @@ import torch
 from model.ernie.modeling_ernie import ACT_DICT, append_name, _build_linear, _build_ln
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn as Torchnn
+import torch.nn.functional as TorchF
+import os
+import logging
 
-class CombinedLoss(nn.Module):
+class CombinedLoss(Torchnn.Module):
     def __init__(self, margin=1.0):
         super(CombinedLoss, self).__init__()
         self.margin = margin
-        self.bce_loss = nn.BCELoss()
+        self.bce_loss = Torchnn.BCELoss()
 
     def forward(self, link_logit, link_label, mask):
         # Flatten the tensors
@@ -43,7 +45,7 @@ class CombinedLoss(nn.Module):
 
             # Compute margin ranking loss
             y = torch.ones_like(P_i)
-            loss_rank = F.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
+            loss_rank = TorchF.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
         else:
             loss_rank = torch.tensor(0.0, device=link_logit.device)
 
@@ -183,14 +185,18 @@ class Model(Encoder):
                 l.training = False
         return self
 
-def train(model, data_loader, optimizer, num_epochs=10):
+def train(model, data_loader, optimizer, num_epochs=10, device='cuda'):
+    model.to(device)
     model.train()
-    criterion = CombinedLoss(margin=1.0)  # Use your CombinedLoss
+    criterion = CombinedLoss(margin=1.0)
 
     for epoch in range(num_epochs):
+        total_loss = 0
         for batch_data in data_loader:
-            # Unpack batch data
-            features, labels = batch_data
+            # Move batch data to the correct device
+            features = {k: v.to(device) for k, v in batch_data['features'].items()}
+            labels = {k: v.to(device) for k, v in batch_data['labels'].items()}
+
             input_data = {
                 'feed_names': ['link_label', 'sentence_ids', 'sentence_mask', 'cls_label', 'label_mask'],
                 'link_label': labels['link_label'],
@@ -206,13 +212,141 @@ def train(model, data_loader, optimizer, num_epochs=10):
             link_label = outputs['label']
 
             # Compute loss
-            targets = ...  # Define targets based on your data
-            loss = criterion(link_logit, link_logit, link_label, targets)
+            mask = labels['label_mask']
+            loss = criterion(link_logit, link_label, mask)
 
             # Backward pass and optimization
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            optimizer.clear_grad()
 
-            print(f"Epoch {epoch}, Loss: {loss.numpy()}")
+            total_loss += loss.item()
 
+        avg_loss = total_loss / len(data_loader)
+        print(f"Epoch {epoch+1}/{num_epochs}, Average Loss: {avg_loss:.4f}")
+
+    print("Training completed.")
+
+def train(model, data_loader, optimizer, num_epochs=10, device='cuda'):
+    model.to(device)
+    model.train()
+    criterion = CombinedLoss(margin=1.0)
+
+    for epoch in range(num_epochs):
+        total_loss = 0
+        for batch_data in data_loader:
+            # Move batch data to the correct device
+            features = {k: v.to(device) for k, v in batch_data['features'].items()}
+            labels = {k: v.to(device) for k, v in batch_data['labels'].items()}
+
+            input_data = {
+                'feed_names': ['link_label', 'sentence_ids', 'sentence_mask', 'cls_label', 'label_mask'],
+                'link_label': labels['link_label'],
+                'sentence_ids': features['sentence_ids'],
+                'sentence_mask': features['sentence_mask'],
+                'cls_label': labels['cls_label'],
+                'label_mask': labels['label_mask']
+            }
+
+            # Forward pass
+            outputs = model(**input_data)
+            link_logit = outputs['logit']
+            link_label = outputs['label']
+
+            # Compute loss
+            mask = labels['label_mask']
+            loss = criterion(link_logit, link_label, mask)
+
+            # Backward pass and optimization
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(data_loader)
+        print(f"Epoch {epoch+1}/{num_epochs}, Average Loss: {avg_loss:.4f}")
+
+    print("Training completed.")
+
+
+
+
+def resume_model(para_path, model):
+        '''
+        Resume from saved model
+        :return:
+        '''
+        if os.path.exists(para_path):
+            para_dict = P.load(para_path)
+            model.set_dict(para_dict)
+            logging.info('Load init model from %s', para_path)
+            return model
+
+
+model_config = {"architecture":{
+        "ernie":"./configs/ernie_config/ernie_base.json",
+        "cls_header":{
+            "num_labels":4
+        },
+        "linking_types":{
+          "start_cls":[1,2],
+          "end_cls":[2,3]
+        },
+        "visual_backbone":{
+            "module":"model.backbones.resnet_vd",
+            "class":"ResNetVd",
+            "params":{
+                "layers":50
+            },
+            "fpn_dim":128
+        },
+        "embedding":{
+            "roi_width":64,
+            "roi_height":4,
+            "rel_pos_size":36,
+            "spa_pos_size":256,
+            "max_seqlen":512,
+            "max_2d_position_embedding":512
+        }
+    }}
+
+model = Model(model_config, [
+            "images",
+            "sentence",
+            "sentence_ids",
+            "sentence_pos",
+            "sentence_mask",
+            "sentence_bboxes",
+            "cls_label",
+            "link_label",
+            "label_mask"
+        ])
+base_model_path = ""
+model = resume_model(base_model_path,model)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+train_dataset = YourDataset(...)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+
+# Initialize the model
+model_config = {...}  # Your model configuration
+model = Model(model_config)
+
+# Load pre-trained weights
+base_model_path = "path/to/your/pretrained/model.pdparams"
+model = resume_model(base_model_path, model)
+
+# Move model to the correct device
+model.to(device)
+
+# Set up optimizer
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+
+# Train the model
+num_epochs = 10
+train(model, train_loader, optimizer, num_epochs, device)
+
+# Save the finetuned model
+new_model_path = ""
+P.save(model.state_dict(), new_model_path)
