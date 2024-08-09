@@ -69,8 +69,7 @@ def eval(config):
     config['init_model'] = weights_path
     eval_config['dataset']['data_path'] = label_path
     eval_config['dataset']['image_path'] = image_path
-    eval_config['dataset']['max_seqlen'] = \
-            model_config['embedding']['max_seqlen']
+    eval_config['dataset']['max_seqlen'] = model_config['embedding']['max_seqlen']
 
     place = P.set_device('gpu')
 
