@@ -5,42 +5,57 @@ import numpy as np
 from paddle import nn
 from model.encoder import Encoder
 from paddle.nn import functional as F
+import torch
 from model.ernie.modeling_ernie import ACT_DICT, append_name, _build_linear, _build_ln
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 class CombinedLoss(nn.Module):
     def __init__(self, margin=1.0):
         super(CombinedLoss, self).__init__()
-        self.bce_loss = nn.BCELoss()  # Binary Cross-Entropy Loss
         self.margin = margin
+        self.bce_loss = nn.BCELoss()
 
-    def forward(self, Pi, Pj, y, targets):
-        """
-        Arguments:
-        - Pi: Tensor of predicted probabilities for positive samples (batch_size, )
-        - Pj: Tensor of predicted probabilities for negative samples (batch_size, )
-        - y: Tensor of ground truth labels (-1 for Pi < Pj, 1 for Pi > Pj) (batch_size, )
-        - targets: Tensor of true labels for binary classification (batch_size, )
+    def forward(self, link_logit, link_label, mask):
+        # Flatten the tensors
+        link_logit_flat = link_logit.view(-1)
+        link_label_flat = link_label.view(-1)
+        mask_flat = mask.view(-1)
 
-        Returns:
-        - Combined loss value: LossBCE + LossRank
-        """
-        
-        # LossBCE: Binary Cross-Entropy Loss
-        loss_bce = self.bce_loss(Pi, targets)
+        # Apply mask
+        valid_logits = link_logit_flat[mask_flat.bool()]
+        valid_labels = link_label_flat[mask_flat.bool()]
 
-        # LossRank: Ranking Loss
-        loss_rank = torch.mean(torch.clamp(-y * (Pi - Pj) + self.margin, min=0))
+        # Binary Cross-Entropy Loss
+        loss_bce = self.bce_loss(valid_logits, valid_labels)
 
-        # Total Loss: Sum of BCE and Ranking Loss
+        # Margin Ranking Loss
+        positive_samples = valid_logits[valid_labels.bool()]
+        negative_samples = valid_logits[~valid_labels.bool()]
+
+        # Ensure we have both positive and negative samples
+        if len(positive_samples) > 0 and len(negative_samples) > 0:
+            # Create all possible pairs
+            P_i = positive_samples.unsqueeze(1).expand(-1, len(negative_samples))
+            P_j = negative_samples.unsqueeze(0).expand(len(positive_samples), -1)
+
+            # Compute margin ranking loss
+            y = torch.ones_like(P_i)
+            loss_rank = F.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
+        else:
+            loss_rank = torch.tensor(0.0, device=link_logit.device)
+
+        # Combine losses
         total_loss = loss_bce + loss_rank
-        
+
         return total_loss
 
-
 class Model(Encoder):
-    """ task for entity linking"""
+    """Task for entity linking"""
     def __init__(self, config, name=''):
-        """ __init__ """
+        """__init__"""
         ernie_config = config['ernie']
         if isinstance(ernie_config, str):
             ernie_config = json.loads(open(ernie_config).read())
@@ -66,6 +81,17 @@ class Model(Encoder):
                 append_name(name, 'linking_cls'),
                 nn.initializer.KaimingNormal())
 
+        # Freeze the base model parameters
+        for param in self.parameters():
+            param.stop_gradient = True
+
+        # Ensure the classifiers are trainable
+        for param in self.label_classifier.parameters():
+            param.stop_gradient = False
+
+        for param in self.link_classifier.parameters():
+            param.stop_gradient = False
+
     def kv_mask_gen(self, cls):
         mask = P.zeros([cls.shape[0], cls.shape[1], cls.shape[1]], 'int32')
         if len(self.start_cls) == 0:
@@ -82,7 +108,7 @@ class Model(Encoder):
         return mask
 
     def forward(self, *args, **kwargs):
-        """ forword """
+        """Forward"""
         feed_names = kwargs.get('feed_names')
         input_data = dict(zip(feed_names, args))
 
@@ -136,7 +162,7 @@ class Model(Encoder):
         return {'logit': link_logit, 'label': link_label}
 
     def eval(self):
-        """ eval """
+        """Eval"""
         if P.in_dynamic_mode():
             super(Model, self).eval()
         self.training = False
@@ -145,12 +171,16 @@ class Model(Encoder):
         return self
 
     def train(self):
-        """ train """
+        """Train"""
         if P.in_dynamic_mode():
             super(Model, self).train()
         self.training = True
         for l in self.sublayers():
-            l.training = True
+            # Set all layers to eval mode except for classifiers
+            if l in [self.label_classifier, self.link_classifier]:
+                l.training = True
+            else:
+                l.training = False
         return self
 
 def train(model, data_loader, optimizer, num_epochs=10):
@@ -186,12 +216,3 @@ def train(model, data_loader, optimizer, num_epochs=10):
 
             print(f"Epoch {epoch}, Loss: {loss.numpy()}")
 
-import paddle.optimizer as optim
-config = {
-    'ernie': 'path_to_ernie_config.json',
-    'cls_header': {'num_labels': 10},
-    'linking_types': {'start_cls': [1], 'end_cls': [2]}
-}
-model = Model(config)
-optimizer = optim.Adam(parameters=model.parameters(), learning_rate=1e-4)
-train(model, data_loader, optimizer)
