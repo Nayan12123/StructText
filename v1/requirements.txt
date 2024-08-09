@@ -1,8 +1,4 @@
-paddlepaddle-gpu==2.1.0
-opencv-python==4.2.0.32
+paddlepaddle
+opencv-python
 tqdm
-json
-codecs
-gzip
-glob
 tabulate
