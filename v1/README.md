@@ -1,4 +1,4 @@
-English | [简体中文](README_ch.md)
+English
 
 ## _StrucTexT_: Structured Text Understanding with Multi-Modal Transformers
 
@@ -125,35 +125,11 @@ pip3 install --upgrade -r requirements.txt -i https://mirror.baidu.com/pypi/simp
 
 | Model link                                         |  Params(M)  |
 | :------------------------------------------------- | :---------: |
-| <a href="https://aisee.bj.bcebos.com/VIMER/StrucTexT/StrucTexT_base_ephoie_labeling.pdparams.tar.gz?authorization=bce-auth-v1%2Fdb0b41e2ab894ecfb1126a768c603d79%2F2021-12-02T08%3A49%3A14Z%2F-1%2Fhost%2F6f75cab944e45627d5f1f630377f4b016dd94104322136bc060912273b852d52" target="_blank">StrucTexT Base for EPHOIE labeling</a>   | 181 |
-| <a href="https://aisee.bj.bcebos.com/VIMER/StrucTexT/StrucTexT_large_ephoie_labeling.pdparams.tar.gz?authorization=bce-auth-v1%2Fdb0b41e2ab894ecfb1126a768c603d79%2F2021-12-02T08%3A50%3A36Z%2F-1%2Fhost%2Fa4b284ef849b5ada868403cc8626d1d89d4ca3b5b89b40fc3e0b8e7ffc251753" target="_blank">StrucTexT Large for EPHOIE labeling</a> | 458 |
-| <a href="https://aisee.bj.bcebos.com/VIMER/StrucTexT/StrucTexT_base_funsd_labeling.pdparams.tar.gz?authorization=bce-auth-v1%2Fdb0b41e2ab894ecfb1126a768c603d79%2F2021-12-02T08%3A49%3A49Z%2F-1%2Fhost%2Fc3b3648f106aaaf1c73c7876c2012fa55c74016325f0352892323165c5b3a16c" target="_blank">StrucTexT Base for FUNSD labeling</a>     | 181 |
-| <a href="https://aisee.bj.bcebos.com/VIMER/StrucTexT/StrucTexT_base_funsd_linking.pdparams.tar.gz?authorization=bce-auth-v1%2Fdb0b41e2ab894ecfb1126a768c603d79%2F2021-12-02T08%3A50%3A16Z%2F-1%2Fhost%2F50aee9546d618b296ec1dfc54084e497ee4836f7034dbe6e2131c26a4003f870" target="_blank">StrucTexT Base for FUNSD linking</a>       | 181 |
+| <a href="https://drive.google.com/drive/u/2/my-drive" target="_blank">StrucTexT Base Pretrained Model weights</a>       | 181 |
 
 
 
 ### Infer fine-tuned models
-   * Token-based ELB task on EPHOIE
-
-```python
-# 1. download and extract the EPHOIE dataset at <ephoie_folder>.
-# 2. download the model: StrucTexT_(base/large)_ephoie_labeling.pdparams
-# 3. generate the eval dataset form.
-python data/make_ephoie_data.py \
-    --config_file ./configs/(base/large)/labeling_ephoie.json \
-    --label_file examples/ephoie/test_list.txt \
-    --label_dir <ephoie_folder>/final_release_image_20201222 \
-    --kvpair_dir <ephoie_folder>/final_release_kvpair_20201222 \
-    --out_dir <ephoie_folder>/test_labels/
-
-# 4. evaluate the labeling task in the EPHOIE dataset.
-python ./tools/eval_infer.py \
-    --config_file ./configs/(base/large)/labeling_ephoie.json \
-    --task_type labeling_token \
-    --label_path <ephoie_folder>/test_labels/ \
-    --image_path <ephoie_folder>/final_release_image_20201222/ \
-    --weights_path StrucTexT_(base/large)_ephoie_labeling.pdparams
-```
    * Segment-based ELB task on FUNSD
 
 ```python
