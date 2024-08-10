@@ -1,4 +1,4 @@
-paddlepaddle
+paddlepaddle==2.5.2
 opencv-python
 tqdm
 tabulate

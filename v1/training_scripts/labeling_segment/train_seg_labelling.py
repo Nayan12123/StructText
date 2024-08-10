@@ -15,6 +15,7 @@ import argparse
 import functools
 import json
 from utils.build_dataloader import build_dataloader
+import pickle
 from utils.utility import add_arguments, print_arguments
 
 
@@ -40,6 +41,7 @@ class Model(Encoder):
             ernie_config = json.loads(open(ernie_config).read())
             config['ernie'] = ernie_config
         super(Model, self).__init__(config, name=name)
+        self.feed_names = name
 
         cls_config = config['cls_header']
         num_labels = cls_config['num_labels']
@@ -52,8 +54,10 @@ class Model(Encoder):
 
     def forward(self, *args, **kwargs):
         """ forword """
-        feed_names = kwargs.get('feed_names')
-        input_data = dict(zip(feed_names, args))
+        # feed_names = kwargs.get('feed_names')
+        print(len(args))
+        print(args)
+        input_data = dict(zip(self.feed_names, args))
 
         encoded, token_embeded = super(Model, self).forward(**input_data)
         encoded_2d = encoded.unsqueeze((1)) # [batch_size, 1, max_seqlen, d_model]
@@ -78,18 +82,20 @@ class Model(Encoder):
         line_logit = line_emb.sum(axis=2) / line_ids.sum(axis=2).clip(min=1.0) # [batch_size, line_num, d_model]
 
         logit = line_logit * lang_logit
-        logit = self.label_classifier(logit) # [batch_size, line_num, num_labels]
+        templogit = self.label_classifier(logit) # [batch_size, line_num, num_labels]
 
         label = input_data.get('label')
-        logit = P.argmax(logit, axis=-1)
+        print("logits before agrmax: ",templogit)
+        logit = P.argmax(templogit, axis=-1)
         mask = label_mask.cast('bool')
 
         selected_logit = P.masked_select(logit, mask)
         selected_label = P.masked_select(label, mask)
         mask = mask.cast('int32')
 
-        return {'logit': selected_logit, 'label': selected_label,
+        return {'logit': selected_logit, 'label': selected_label,'initial_logits':templogit,
                 'logit_prim': logit, 'label_prim': label, 'mask': mask}
+
 
     def eval(self):
         """ eval """
@@ -115,7 +121,9 @@ def resume_model(para_path, model):
         :return:
         '''
         if os.path.exists(para_path):
-            para_dict = P.load(para_path)
+            # para_dict = P.load(para_path)
+            with open(para_path, "rb") as file:
+                para_dict = pickle.load(file)
             model.set_dict(para_dict)
             logging.info('Load init model from %s', para_path)
             return model
@@ -131,8 +139,15 @@ def train(model,train_loader):
             # Assuming batch contains all required inputs
             outputs = model(*batch)
             
-            logits = outputs['logit']
+            logits = outputs['initial_logits']
+            logits = logits.squeeze(0)
+            print("logits======")
+            print(logits)
             labels = outputs['label']
+            print("labels")
+            print(labels)
+            # softmax = nn.Softmax(dim=0)
+            # probabilities = softmax(logits)
             
             loss = loss_fn(logits, labels)
             
@@ -146,6 +161,7 @@ def train(model,train_loader):
     
     # Save the model after training
     P.save(model.state_dict(), 'segment_labelling_trained_model.pdparams')
+
 config = json.loads(open(args.config_file).read())
 eval_config = config['eval']
 model_config = config['architecture']
@@ -177,14 +193,15 @@ model_config = config['architecture']
 #     }}
 
 # base_model_path = "./StrucTexT_base_pretrained.pdparams"
+model = Model(model_config, eval_config['feed_names'])
+print(model)
 base_model_path = args.weights_path
+print(base_model_path)
 model = resume_model(base_model_path,model)
+print(model)
 optimizer = Adam(learning_rate=LEARNING_RATE, parameters=model.parameters())
-config_file = "config_fileconfig_fileconfig_file"
-config = json.loads(open(config_file).read())
 config['init_model'] = base_model_path
 eval_config = config['eval']
-model = Model(model_config,eval_config['feed_names'])
 eval_config['dataset']['data_path'] = args.label_path
 eval_config['dataset']['image_path'] = args.image_path
 eval_config['dataset']['max_seqlen'] = model_config['embedding']['max_seqlen']
@@ -193,7 +210,7 @@ train_dataset = dataset.Dataset(
             eval_config['dataset'],
             eval_config['feed_names'],
             False)
-place = P.set_device('gpu')
+place = P.set_device('cpu')
 
 train_loader = build_dataloader(
     config['eval'],

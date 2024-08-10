@@ -5,54 +5,157 @@ import numpy as np
 from paddle import nn
 from model.encoder import Encoder
 from paddle.nn import functional as F
-import torch
 from model.ernie.modeling_ernie import ACT_DICT, append_name, _build_linear, _build_ln
-
-import torch
-import torch.nn as Torchnn
-import torch.nn.functional as TorchF
+from paddle.optimizer import Adam
+# import torch
+# import torch.nn as Torchnn
+# import torch.nn.functional as TorchF
 import os
 import logging
+import dataset
+import logging
+import argparse
+import functools
+import json
+from utils.build_dataloader import build_dataloader
+import pickle
+from utils.utility import add_arguments, print_arguments
+LEARNING_RATE = 1e-3
+BATCH_SIZE = 32
+NUM_EPOCHS = 10
 
-class CombinedLoss(Torchnn.Module):
+parser = argparse.ArgumentParser(description=__doc__)
+add_arg = functools.partial(add_arguments, argparser=parser)
+parser = argparse.ArgumentParser('launch for training')
+parser.add_argument('--config_file', type=str, required=True)
+parser.add_argument('--label_path', type=str, required=True)
+parser.add_argument('--image_path', type=str, required=True)
+parser.add_argument('--weights_path', type=str, required=True)
+args = parser.parse_args()
+print_arguments(args)
+
+# class CombinedLoss(Torchnn.Module):
+#     def __init__(self, margin=1.0):
+#         super(CombinedLoss, self).__init__()
+#         self.margin = margin
+#         self.bce_loss = Torchnn.BCELoss()
+
+#     def forward(self, link_logit, link_label, mask):
+#         # Flatten the tensors
+#         link_logit_flat = link_logit.view(-1)
+#         link_label_flat = link_label.view(-1)
+#         mask_flat = mask.view(-1)
+
+#         # Apply mask
+#         valid_logits = link_logit_flat[mask_flat.bool()]
+#         valid_labels = link_label_flat[mask_flat.bool()]
+
+#         # Binary Cross-Entropy Loss
+#         loss_bce = self.bce_loss(valid_logits, valid_labels)
+
+#         # Margin Ranking Loss
+#         positive_samples = valid_logits[valid_labels.bool()]
+#         negative_samples = valid_logits[~valid_labels.bool()]
+
+#         # Ensure we have both positive and negative samples
+#         if len(positive_samples) > 0 and len(negative_samples) > 0:
+#             # Create all possible pairs
+#             P_i = positive_samples.unsqueeze(1).expand(-1, len(negative_samples))
+#             P_j = negative_samples.unsqueeze(0).expand(len(positive_samples), -1)
+
+#             # Compute margin ranking loss
+#             y = torch.ones_like(P_i)
+#             loss_rank = TorchF.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
+#         else:
+#             loss_rank = torch.tensor(0.0, device=link_logit.device)
+
+#         # Combine losses
+#         total_loss = loss_bce + loss_rank
+
+#         return total_loss
+
+import paddle
+import paddle.nn.functional as F
+
+
+class CombinedLoss(paddle.nn.Layer):
     def __init__(self, margin=1.0):
         super(CombinedLoss, self).__init__()
         self.margin = margin
-        self.bce_loss = Torchnn.BCELoss()
 
-    def forward(self, link_logit, link_label, mask):
-        # Flatten the tensors
-        link_logit_flat = link_logit.view(-1)
-        link_label_flat = link_label.view(-1)
-        mask_flat = mask.view(-1)
+    def forward(self, logits, true_labels):
+        """
+        :param logits: bs x m x m matrix of logits (bs = batch size, m = number of segments)
+        :param true_labels: bs x m x m matrix of true binary labels
+        :return: Combined Margin Ranking Loss and Binary Cross-Entropy Loss
+        """
+        # Sigmoid activation to convert logits to probabilities
+        loss_bce = F.binary_cross_entropy(logits, true_labels.astype('float32'), reduction='mean')
 
-        # Apply mask
-        valid_logits = link_logit_flat[mask_flat.bool()]
-        valid_labels = link_label_flat[mask_flat.bool()]
+        batch_size, m, _ = logits.shape
+        positive_scores = logits * true_labels
+        negative_mask = 1 - true_labels
+        negative_scores = logits * negative_mask
+        positive_scores_flat = positive_scores.reshape([batch_size, -1])
+        negative_scores_flat = negative_scores.reshape([batch_size, -1])
+        positive_scores_expanded = positive_scores_flat.unsqueeze(-1)  # Shape: [bs, m*m, 1]
+        negative_scores_expanded = negative_scores_flat.unsqueeze(1)  # Shape: [bs, 1, m*m]
+        y = paddle.ones_like(positive_scores_expanded)
+        loss_ranking = F.margin_ranking_loss(
+            positive_scores_expanded, 
+            negative_scores_expanded, 
+            y, 
+            margin=self.margin
+        )
+        
+        # Combine the BCE loss and Margin Ranking Loss
+        loss = loss_bce + loss_ranking
 
-        # Binary Cross-Entropy Loss
-        loss_bce = self.bce_loss(valid_logits, valid_labels)
+        return loss
 
-        # Margin Ranking Loss
-        positive_samples = valid_logits[valid_labels.bool()]
-        negative_samples = valid_logits[~valid_labels.bool()]
 
-        # Ensure we have both positive and negative samples
-        if len(positive_samples) > 0 and len(negative_samples) > 0:
-            # Create all possible pairs
-            P_i = positive_samples.unsqueeze(1).expand(-1, len(negative_samples))
-            P_j = negative_samples.unsqueeze(0).expand(len(positive_samples), -1)
+# class CombinedLoss(nn.Layer):
+#     def __init__(self, margin=1.0):
+#         super(CombinedLoss, self).__init__()
+#         self.margin = margin
+#         self.bce_loss = nn.BCELoss()
 
-            # Compute margin ranking loss
-            y = torch.ones_like(P_i)
-            loss_rank = TorchF.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
-        else:
-            loss_rank = torch.tensor(0.0, device=link_logit.device)
+#     def forward(self, link_logit, link_label, mask):
+#         # Flatten the tensors
+#         # link_logit_flat = P.flatten(link_logit)
+#         # link_label_flat = P.flatten(link_label)
+#         # print(link_logit.shape)
+#         mask_flat = P.squeeze(mask, axis=None, name=None)
 
-        # Combine losses
-        total_loss = loss_bce + loss_rank
 
-        return total_loss
+#         # Apply mask
+#         valid_logits = P.masked_select(link_logit_flat, mask_flat.astype('bool'))
+#         valid_labels = P.masked_select(link_label_flat, mask_flat.astype('bool'))
+
+#         # Binary Cross-Entropy Loss
+#         loss_bce = self.bce_loss(valid_logits, valid_labels)
+
+#         # Margin Ranking Loss
+#         positive_samples = P.masked_select(valid_logits, valid_labels.astype('bool'))
+#         negative_samples = P.masked_select(valid_logits, ~valid_labels.astype('bool'))
+
+#         # Ensure we have both positive and negative samples
+#         if len(positive_samples) > 0 and len(negative_samples) > 0:
+#             # Create all possible pairs
+#             P_i = positive_samples.unsqueeze(1).expand([-1, len(negative_samples)])
+#             P_j = negative_samples.unsqueeze(0).expand([len(positive_samples), -1])
+
+#             # Compute margin ranking loss
+#             y = P.ones_like(P_i)
+#             loss_rank = F.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
+#         else:
+#             loss_rank = P.to_tensor(0.0, place=link_logit.place)
+
+#         # Combine losses
+#         total_loss = loss_bce + loss_rank
+
+#         return total_loss
+
 
 class Model(Encoder):
     """Task for entity linking"""
@@ -63,6 +166,7 @@ class Model(Encoder):
             ernie_config = json.loads(open(ernie_config).read())
             config['ernie'] = ernie_config
         super(Model, self).__init__(config, name=name)
+        self.feed_names = name
 
         cls_config = config['cls_header']
         num_labels = cls_config['num_labels']
@@ -111,8 +215,9 @@ class Model(Encoder):
 
     def forward(self, *args, **kwargs):
         """Forward"""
-        feed_names = kwargs.get('feed_names')
-        input_data = dict(zip(feed_names, args))
+        # feed_names = kwargs.get('feed_names')
+        
+        input_data = dict(zip(self.feed_names, args))
 
         encoded, token_embeded = super(Model, self).forward(**input_data)
         encoded_2d = encoded.unsqueeze((1)) # [batch_size, 1, max_seqlen, d_model]
@@ -152,13 +257,14 @@ class Model(Encoder):
 
         cls_logit = self.label_classifier(encoder_emb)
         cls_logit = P.argmax(cls_logit, axis=-1)
-
+        print(cls_logit.shape)
         mask = link_mask * self.kv_mask_gen(cls_logit)
 
         ## link loss calculation
         link_emb = encoder_emb.unsqueeze(1).tile((1, encoder_emb.shape[1], 1, 1))
         link_emb = P.abs(link_emb - link_emb.transpose((0, 2, 1, 3)))
         link_logit = self.link_classifier(link_emb).squeeze(-1)
+        print(link_logit)
         link_logit = F.sigmoid(link_logit) * mask
 
         return {'logit': link_logit, 'label': link_label}
@@ -179,9 +285,9 @@ class Model(Encoder):
         self.training = True
         for l in self.sublayers():
             # Set all layers to eval mode except for classifiers
-            if l in [self.label_classifier, self.link_classifier]:
-                l.training = True
-            else:
+            # if l in [self.label_classifier, self.link_classifier]:
+            #     l.training = True
+            # else:
                 l.training = False
         return self
 
@@ -227,47 +333,44 @@ class Model(Encoder):
 
 #     print("Training completed.")
 
-def train(model, data_loader, optimizer, num_epochs=10, device='cuda'):
-    model.to(device)
+def train(model, data_loader):
     model.train()
     criterion = CombinedLoss(margin=1.0)
 
-    for epoch in range(num_epochs):
+    for epoch in range(NUM_EPOCHS):
         total_loss = 0
         for batch_data in data_loader:
             # Move batch data to the correct device
-            features = {k: v.to(device) for k, v in batch_data['features'].items()}
-            labels = {k: v.to(device) for k, v in batch_data['labels'].items()}
-
-            input_data = {
-                'feed_names': ['link_label', 'sentence_ids', 'sentence_mask', 'cls_label', 'label_mask'],
-                'link_label': labels['link_label'],
-                'sentence_ids': features['sentence_ids'],
-                'sentence_mask': features['sentence_mask'],
-                'cls_label': labels['cls_label'],
-                'label_mask': labels['label_mask']
-            }
+            # print(batch_data.shape)  
+                     
+            outputs = model(*batch_data)
 
             # Forward pass
-            outputs = model(**input_data)
             link_logit = outputs['logit']
             link_label = outputs['label']
+            print(link_label)
+            
 
             # Compute loss
-            mask = labels['label_mask']
-            loss = criterion(link_logit, link_label, mask)
+             
+            # mask = batch_data[-1]        
+
+            loss = criterion(link_logit, link_label)
 
             # Backward pass and optimization
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            optimizer.clear_grad()
+            
 
             total_loss += loss.item()
 
         avg_loss = total_loss / len(data_loader)
-        print(f"Epoch {epoch+1}/{num_epochs}, Average Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Average Loss: {avg_loss:.4f}")
 
     print("Training completed.")
+    P.save(model.state_dict(), 'entity_linking_trained_model.pdparams')
+    
 
 
 def resume_model(para_path, model):
@@ -276,69 +379,41 @@ def resume_model(para_path, model):
         :return:
         '''
         if os.path.exists(para_path):
-            para_dict = P.load(para_path)
+            # para_dict = P.load(para_path)
+            with open(para_path, "rb") as file:
+                para_dict = pickle.load(file)
             model.set_dict(para_dict)
             logging.info('Load init model from %s', para_path)
             return model
 
 
-model_config = {"architecture":{
-        "ernie":"./configs/ernie_config/ernie_base.json",
-        "cls_header":{
-            "num_labels":4
-        },
-        "linking_types":{
-          "start_cls":[1,2],
-          "end_cls":[2,3]
-        },
-        "visual_backbone":{
-            "module":"model.backbones.resnet_vd",
-            "class":"ResNetVd",
-            "params":{
-                "layers":50
-            },
-            "fpn_dim":128
-        },
-        "embedding":{
-            "roi_width":64,
-            "roi_height":4,
-            "rel_pos_size":36,
-            "spa_pos_size":256,
-            "max_seqlen":512,
-            "max_2d_position_embedding":512
-        }
-    }}
-
-model = Model(model_config, [
-            "images",
-            "sentence",
-            "sentence_ids",
-            "sentence_pos",
-            "sentence_mask",
-            "sentence_bboxes",
-            "cls_label",
-            "link_label",
-            "label_mask"
-        ])
-base_model_path = ""
+config = json.loads(open(args.config_file).read())
+eval_config = config['eval']
+model_config = config['architecture']
+model = Model(model_config, eval_config['feed_names'])
+print(model)
+base_model_path = args.weights_path
+print(base_model_path)
 model = resume_model(base_model_path,model)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(model)
+optimizer = Adam(learning_rate=LEARNING_RATE, parameters=model.parameters())
+config['init_model'] = base_model_path
+eval_config = config['eval']
+eval_config['dataset']['data_path'] = args.label_path
+eval_config['dataset']['image_path'] = args.image_path
+eval_config['dataset']['max_seqlen'] = model_config['embedding']['max_seqlen']
+# Assume we have a custom Dataset class
+train_dataset = dataset.Dataset(
+            eval_config['dataset'],
+            eval_config['feed_names'],
+            False)
+place = P.set_device('cpu')
 
-train_dataset = YourDataset(...)
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+train_loader = build_dataloader(
+    config['eval'],
+    train_dataset,
+    'Train',
+    place,
+    False)
 
-base_model_path = "path/to/your/pretrained/model.pdparams"
-
-# Move model to the correct device
-model.to(device)
-
-# Set up optimizer
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
-
-# Train the model
-num_epochs = 10
-train(model, train_loader, optimizer, num_epochs, device)
-
-# Save the finetuned model
-new_model_path = ""
-P.save(model.state_dict(), new_model_path)
+train(model,train_loader)
