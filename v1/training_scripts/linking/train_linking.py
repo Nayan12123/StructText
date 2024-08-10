@@ -31,48 +31,10 @@ parser.add_argument('--config_file', type=str, required=True)
 parser.add_argument('--label_path', type=str, required=True)
 parser.add_argument('--image_path', type=str, required=True)
 parser.add_argument('--weights_path', type=str, required=True)
+parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training (default: 32)')
 args = parser.parse_args()
 print_arguments(args)
 
-# class CombinedLoss(Torchnn.Module):
-#     def __init__(self, margin=1.0):
-#         super(CombinedLoss, self).__init__()
-#         self.margin = margin
-#         self.bce_loss = Torchnn.BCELoss()
-
-#     def forward(self, link_logit, link_label, mask):
-#         # Flatten the tensors
-#         link_logit_flat = link_logit.view(-1)
-#         link_label_flat = link_label.view(-1)
-#         mask_flat = mask.view(-1)
-
-#         # Apply mask
-#         valid_logits = link_logit_flat[mask_flat.bool()]
-#         valid_labels = link_label_flat[mask_flat.bool()]
-
-#         # Binary Cross-Entropy Loss
-#         loss_bce = self.bce_loss(valid_logits, valid_labels)
-
-#         # Margin Ranking Loss
-#         positive_samples = valid_logits[valid_labels.bool()]
-#         negative_samples = valid_logits[~valid_labels.bool()]
-
-#         # Ensure we have both positive and negative samples
-#         if len(positive_samples) > 0 and len(negative_samples) > 0:
-#             # Create all possible pairs
-#             P_i = positive_samples.unsqueeze(1).expand(-1, len(negative_samples))
-#             P_j = negative_samples.unsqueeze(0).expand(len(positive_samples), -1)
-
-#             # Compute margin ranking loss
-#             y = torch.ones_like(P_i)
-#             loss_rank = TorchF.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
-#         else:
-#             loss_rank = torch.tensor(0.0, device=link_logit.device)
-
-#         # Combine losses
-#         total_loss = loss_bce + loss_rank
-
-#         return total_loss
 
 import paddle
 import paddle.nn.functional as F
@@ -113,48 +75,6 @@ class CombinedLoss(paddle.nn.Layer):
 
         return loss
 
-
-# class CombinedLoss(nn.Layer):
-#     def __init__(self, margin=1.0):
-#         super(CombinedLoss, self).__init__()
-#         self.margin = margin
-#         self.bce_loss = nn.BCELoss()
-
-#     def forward(self, link_logit, link_label, mask):
-#         # Flatten the tensors
-#         # link_logit_flat = P.flatten(link_logit)
-#         # link_label_flat = P.flatten(link_label)
-#         # print(link_logit.shape)
-#         mask_flat = P.squeeze(mask, axis=None, name=None)
-
-
-#         # Apply mask
-#         valid_logits = P.masked_select(link_logit_flat, mask_flat.astype('bool'))
-#         valid_labels = P.masked_select(link_label_flat, mask_flat.astype('bool'))
-
-#         # Binary Cross-Entropy Loss
-#         loss_bce = self.bce_loss(valid_logits, valid_labels)
-
-#         # Margin Ranking Loss
-#         positive_samples = P.masked_select(valid_logits, valid_labels.astype('bool'))
-#         negative_samples = P.masked_select(valid_logits, ~valid_labels.astype('bool'))
-
-#         # Ensure we have both positive and negative samples
-#         if len(positive_samples) > 0 and len(negative_samples) > 0:
-#             # Create all possible pairs
-#             P_i = positive_samples.unsqueeze(1).expand([-1, len(negative_samples)])
-#             P_j = negative_samples.unsqueeze(0).expand([len(positive_samples), -1])
-
-#             # Compute margin ranking loss
-#             y = P.ones_like(P_i)
-#             loss_rank = F.margin_ranking_loss(P_i, P_j, y, margin=self.margin)
-#         else:
-#             loss_rank = P.to_tensor(0.0, place=link_logit.place)
-
-#         # Combine losses
-#         total_loss = loss_bce + loss_rank
-
-#         return total_loss
 
 
 class Model(Encoder):
@@ -388,6 +308,8 @@ def resume_model(para_path, model):
 
 
 config = json.loads(open(args.config_file).read())
+# config['eval']['loader']['collect_batch'] = True
+# config['eval']['loader']['batch_size_per_card']= args.batch_size
 eval_config = config['eval']
 model_config = config['architecture']
 model = Model(model_config, eval_config['feed_names'])

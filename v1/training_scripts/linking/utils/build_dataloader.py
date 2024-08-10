@@ -67,9 +67,12 @@ def build_dataloader(config, dataset, mode, device, distributed=False):
     collate_fn = None
     batch_size = None
     batch_sampler = None
+    
+    print(collect_batch)
 
     if collect_batch:
         batch_size = loader_config['batch_size_per_card']
+        print(batch_size)
         if distributed:
             #Distribute data to multiple cards
             batch_sampler = DistributedBatchSampler(
@@ -92,15 +95,15 @@ def build_dataloader(config, dataset, mode, device, distributed=False):
                 batch_size=batch_size,
                 shuffle=shuffle,
                 drop_last=drop_last)
-
     data_loader = DataLoader(
-        dataset=dataset,
-        batch_size=batch_size,
-        batch_sampler=batch_sampler,
-        collate_fn=collate_fn,
-        places=device,
-        timeout=60,
-        num_workers=num_workers,
-        return_list=True)
+    dataset=dataset,
+    batch_size=batch_size,
+    batch_sampler=batch_sampler,
+    collate_fn=collate_fn,
+    places=device,
+    timeout=60,
+    num_workers=num_workers,
+    return_list=True)
+
 
     return data_loader

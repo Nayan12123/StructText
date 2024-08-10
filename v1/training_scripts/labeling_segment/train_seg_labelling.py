@@ -20,8 +20,7 @@ from utils.utility import add_arguments, print_arguments
 
 
 LEARNING_RATE = 1e-3
-BATCH_SIZE = 32
-NUM_EPOCHS = 10
+NUM_EPOCHS = 3
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(add_arguments, argparser=parser)
 parser = argparse.ArgumentParser('launch for training')
@@ -29,6 +28,8 @@ parser.add_argument('--config_file', type=str, required=True)
 parser.add_argument('--label_path', type=str, required=True)
 parser.add_argument('--image_path', type=str, required=True)
 parser.add_argument('--weights_path', type=str, required=True)
+parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training (default: 32)')
+
 args = parser.parse_args()
 print_arguments(args)
 
@@ -201,6 +202,10 @@ model = resume_model(base_model_path,model)
 print(model)
 optimizer = Adam(learning_rate=LEARNING_RATE, parameters=model.parameters())
 config['init_model'] = base_model_path
+# config['eval']['loader']['collect_batch'] = True
+# config['eval']['loader']['batch_size_per_card']= args.batch_size
+# config['eval']['loader']['shuffle'] = True
+
 eval_config = config['eval']
 eval_config['dataset']['data_path'] = args.label_path
 eval_config['dataset']['image_path'] = args.image_path
@@ -209,7 +214,7 @@ eval_config['dataset']['max_seqlen'] = model_config['embedding']['max_seqlen']
 train_dataset = dataset.Dataset(
             eval_config['dataset'],
             eval_config['feed_names'],
-            False)
+            True)
 place = P.set_device('cpu')
 
 train_loader = build_dataloader(
@@ -220,3 +225,5 @@ train_loader = build_dataloader(
     False)
 
 train(model,train_loader)
+
+##todo change batching size and hence update the config file's eval loader keys' batch size parameter
