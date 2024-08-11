@@ -7,7 +7,7 @@ python data/make_funsd_data.py \
 
 
 
-python training_scripts/labeling_segment/train_seg_labelling.py --config_file "/configs/base/labeling_funsd.json" --label_path "/dataset/training_data/train_labels" --image_path "/dataset/training_data/images" --weights_path "../StrucTexT_base_pretrained.pdparams"
+python training_scripts/labeling_segment/train_seg_labelling.py --config_file "./configs/base/labeling_funsd.json" --label_path "./dataset/training_data/train_labels" --image_path "./dataset/training_data/images" --weights_path "../StrucTexT_base_pretrained.pdparams"
 
 
-python training_scripts/linking/train_linking.py --config_file "/configs/base/linking_funsd.json" --label_path "/dataset/training_data/train_labels" --image_path "/dataset/training_data/images" --weights_path "../StrucTexT_base_pretrained.pdparams"
+python training_scripts/linking/train_linking.py --config_file "./configs/base/linking_funsd.json" --label_path "./dataset/training_data/train_labels" --image_path "./dataset/training_data/images" --weights_path "../StrucTexT_base_pretrained.pdparams"

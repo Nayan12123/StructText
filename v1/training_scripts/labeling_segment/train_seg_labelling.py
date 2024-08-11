@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 
 LEARNING_RATE = 1e-3
-NUM_EPOCHS = 1
+NUM_EPOCHS = 2
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(add_arguments, argparser=parser)
 parser = argparse.ArgumentParser('launch for training')
