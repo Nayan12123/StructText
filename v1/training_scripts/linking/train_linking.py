@@ -7,6 +7,7 @@ from model.encoder import Encoder
 from paddle.nn import functional as F
 from model.ernie.modeling_ernie import ACT_DICT, append_name, _build_linear, _build_ln
 from paddle.optimizer import Adam
+
 import os
 import logging
 import dataset
@@ -37,7 +38,7 @@ print_arguments(args)
 
 
 class CombinedLoss(nn.Layer):
-    def __init__(self, margin=1.0):
+    def __init__(self, margin=0.8):
         super(CombinedLoss, self).__init__()
         self.margin = margin
 
@@ -58,7 +59,7 @@ class CombinedLoss(nn.Layer):
         negative_scores_flat = negative_scores.reshape([batch_size, -1])
         positive_scores_expanded = positive_scores_flat.unsqueeze(-1)  # Shape: [bs, m*m, 1]
         negative_scores_expanded = negative_scores_flat.unsqueeze(1)  # Shape: [bs, 1, m*m]
-        y = paddle.ones_like(positive_scores_expanded)
+        y = P.ones_like(positive_scores_expanded)
         loss_ranking = F.margin_ranking_loss(
             positive_scores_expanded, 
             negative_scores_expanded, 
