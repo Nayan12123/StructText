@@ -7,9 +7,6 @@ from model.encoder import Encoder
 from paddle.nn import functional as F
 from model.ernie.modeling_ernie import ACT_DICT, append_name, _build_linear, _build_ln
 from paddle.optimizer import Adam
-# import torch
-# import torch.nn as Torchnn
-# import torch.nn.functional as TorchF
 import os
 import logging
 import dataset
@@ -20,9 +17,9 @@ import json
 from utils.build_dataloader import build_dataloader
 import pickle
 from utils.utility import add_arguments, print_arguments
+from tqdm import tqdm
 LEARNING_RATE = 1e-3
-BATCH_SIZE = 32
-NUM_EPOCHS = 10
+NUM_EPOCHS = 2
 
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(add_arguments, argparser=parser)
@@ -31,16 +28,15 @@ parser.add_argument('--config_file', type=str, required=True)
 parser.add_argument('--label_path', type=str, required=True)
 parser.add_argument('--image_path', type=str, required=True)
 parser.add_argument('--weights_path', type=str, required=True)
-parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training (default: 32)')
+parser.add_argument('--accumulation_steps', type=int, default=4, help='Gradient Accumalation  (default: 4)')
 args = parser.parse_args()
 print_arguments(args)
 
 
-import paddle
-import paddle.nn.functional as F
 
 
-class CombinedLoss(paddle.nn.Layer):
+
+class CombinedLoss(nn.Layer):
     def __init__(self, margin=1.0):
         super(CombinedLoss, self).__init__()
         self.margin = margin
@@ -177,14 +173,14 @@ class Model(Encoder):
 
         cls_logit = self.label_classifier(encoder_emb)
         cls_logit = P.argmax(cls_logit, axis=-1)
-        print(cls_logit.shape)
+        # print(cls_logit.shape)
         mask = link_mask * self.kv_mask_gen(cls_logit)
 
         ## link loss calculation
         link_emb = encoder_emb.unsqueeze(1).tile((1, encoder_emb.shape[1], 1, 1))
         link_emb = P.abs(link_emb - link_emb.transpose((0, 2, 1, 3)))
         link_logit = self.link_classifier(link_emb).squeeze(-1)
-        print(link_logit)
+        # print(link_logit)
         link_logit = F.sigmoid(link_logit) * mask
 
         return {'logit': link_logit, 'label': link_label}
@@ -211,86 +207,39 @@ class Model(Encoder):
                 l.training = False
         return self
 
-# def train(model, data_loader, optimizer, num_epochs=10, device='cuda'):
-#     model.to(device)
-#     model.train()
-#     criterion = CombinedLoss(margin=1.0)
-
-#     for epoch in range(num_epochs):
-#         total_loss = 0
-#         for batch_data in data_loader:
-#             # Move batch data to the correct device
-#             features = {k: v.to(device) for k, v in batch_data['features'].items()}
-#             labels = {k: v.to(device) for k, v in batch_data['labels'].items()}
-
-#             input_data = {
-#                 'feed_names': ['link_label', 'sentence_ids', 'sentence_mask', 'cls_label', 'label_mask'],
-#                 'link_label': labels['link_label'],
-#                 'sentence_ids': features['sentence_ids'],
-#                 'sentence_mask': features['sentence_mask'],
-#                 'cls_label': labels['cls_label'],
-#                 'label_mask': labels['label_mask']
-#             }
-
-#             # Forward pass
-#             outputs = model(**input_data)
-#             link_logit = outputs['logit']
-#             link_label = outputs['label']
-
-#             # Compute loss
-#             mask = labels['label_mask']
-#             loss = criterion(link_logit, link_label, mask)
-
-#             # Backward pass and optimization
-#             optimizer.zero_grad()
-#             loss.backward()
-#             optimizer.step()
-
-#             total_loss += loss.item()
-
-#         avg_loss = total_loss / len(data_loader)
-#         print(f"Epoch {epoch+1}/{num_epochs}, Average Loss: {avg_loss:.4f}")
-
-#     print("Training completed.")
-
-def train(model, data_loader):
+def train(model, data_loader, accumulation_steps=4):
     model.train()
     criterion = CombinedLoss(margin=1.0)
 
     for epoch in range(NUM_EPOCHS):
         total_loss = 0
-        for batch_data in data_loader:
-            # Move batch data to the correct device
-            # print(batch_data.shape)  
-                     
+        optimizer.clear_grad() 
+
+        for i, batch_data in tqdm(enumerate(data_loader)):
+ 
+
             outputs = model(*batch_data)
 
-            # Forward pass
             link_logit = outputs['logit']
             link_label = outputs['label']
-            print(link_label)
-            
-
-            # Compute loss
-             
-            # mask = batch_data[-1]        
+            # print(link_label)
 
             loss = criterion(link_logit, link_label)
+            loss = loss / accumulation_steps  # Scale the loss by the accumulation steps
 
-            # Backward pass and optimization
             loss.backward()
-            optimizer.step()
-            optimizer.clear_grad()
-            
+            if (i + 1) % accumulation_steps == 0:
+                optimizer.step()
+                optimizer.clear_grad()
 
-            total_loss += loss.item()
+            total_loss += loss.item() * accumulation_steps  # Accumulate total loss over all batches
 
         avg_loss = total_loss / len(data_loader)
         print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Average Loss: {avg_loss:.4f}")
 
     print("Training completed.")
     P.save(model.state_dict(), 'entity_linking_trained_model.pdparams')
-    
+ 
 
 
 def resume_model(para_path, model):
@@ -313,11 +262,8 @@ config = json.loads(open(args.config_file).read())
 eval_config = config['eval']
 model_config = config['architecture']
 model = Model(model_config, eval_config['feed_names'])
-print(model)
 base_model_path = args.weights_path
-print(base_model_path)
 model = resume_model(base_model_path,model)
-print(model)
 optimizer = Adam(learning_rate=LEARNING_RATE, parameters=model.parameters())
 config['init_model'] = base_model_path
 eval_config = config['eval']
@@ -337,5 +283,5 @@ train_loader = build_dataloader(
     'Train',
     place,
     False)
-
-train(model,train_loader)
+accumulation_steps = args.accumulation_steps
+train(model,train_loader,accumulation_steps)

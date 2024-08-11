@@ -17,10 +17,11 @@ import json
 from utils.build_dataloader import build_dataloader
 import pickle
 from utils.utility import add_arguments, print_arguments
+from tqdm import tqdm
 
 
 LEARNING_RATE = 1e-3
-NUM_EPOCHS = 3
+NUM_EPOCHS = 1
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(add_arguments, argparser=parser)
 parser = argparse.ArgumentParser('launch for training')
@@ -28,7 +29,7 @@ parser.add_argument('--config_file', type=str, required=True)
 parser.add_argument('--label_path', type=str, required=True)
 parser.add_argument('--image_path', type=str, required=True)
 parser.add_argument('--weights_path', type=str, required=True)
-parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training (default: 32)')
+parser.add_argument('--accumulation_steps', type=int, default=4, help='Gradient Accumalation  (default: 4)')
 
 args = parser.parse_args()
 print_arguments(args)
@@ -56,8 +57,8 @@ class Model(Encoder):
     def forward(self, *args, **kwargs):
         """ forword """
         # feed_names = kwargs.get('feed_names')
-        print(len(args))
-        print(args)
+        # print(len(args))
+        # print(args)
         input_data = dict(zip(self.feed_names, args))
 
         encoded, token_embeded = super(Model, self).forward(**input_data)
@@ -86,7 +87,7 @@ class Model(Encoder):
         templogit = self.label_classifier(logit) # [batch_size, line_num, num_labels]
 
         label = input_data.get('label')
-        print("logits before agrmax: ",templogit)
+        # print("logits before agrmax: ",templogit)
         logit = P.argmax(templogit, axis=-1)
         mask = label_mask.cast('bool')
 
@@ -132,33 +133,28 @@ def resume_model(para_path, model):
 # Training loop
 loss_fn = nn.CrossEntropyLoss()
 
-def train(model,train_loader):
+def train(model, train_loader, accumulation_steps=4):
     model.train()
     for epoch in range(NUM_EPOCHS):
         total_loss = 0
-        for batch in train_loader:
-            # Assuming batch contains all required inputs
+        optimizer.clear_grad()  #
+        
+        for step, batch in tqdm(enumerate(train_loader)):
             outputs = model(*batch)
             
-            logits = outputs['initial_logits']
-            logits = logits.squeeze(0)
-            print("logits======")
-            print(logits)
+            logits = outputs['initial_logits'].squeeze(0)
+            
             labels = outputs['label']
-            print("labels")
-            print(labels)
-            # softmax = nn.Softmax(dim=0)
-            # probabilities = softmax(logits)
-            
             loss = loss_fn(logits, labels)
-            
-            loss.backward()
-            optimizer.step()
-            optimizer.clear_grad()
-            
-            total_loss += loss.item()
-        
-        print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Loss: {total_loss/len(train_loader)}")
+            loss = loss / accumulation_steps  # Normalize the loss
+            loss.backward()  
+            if (step + 1) % accumulation_steps == 0 or (step + 1) == len(train_loader):
+                optimizer.step()
+                optimizer.clear_grad()
+
+            total_loss += loss.item() * accumulation_steps  # Multiply by accumulation_steps to get the actual loss
+
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}, Loss: {total_loss / len(train_loader)}")
     
     # Save the model after training
     P.save(model.state_dict(), 'segment_labelling_trained_model.pdparams')
@@ -194,12 +190,12 @@ model_config = config['architecture']
 #     }}
 
 # base_model_path = "./StrucTexT_base_pretrained.pdparams"
+accumulation_steps = args.accumulation_steps
 model = Model(model_config, eval_config['feed_names'])
-print(model)
+# print(model)
 base_model_path = args.weights_path
-print(base_model_path)
 model = resume_model(base_model_path,model)
-print(model)
+# print(model)
 optimizer = Adam(learning_rate=LEARNING_RATE, parameters=model.parameters())
 config['init_model'] = base_model_path
 # config['eval']['loader']['collect_batch'] = True
@@ -224,6 +220,6 @@ train_loader = build_dataloader(
     place,
     False)
 
-train(model,train_loader)
+train(model,train_loader,accumulation_steps)
 
 ##todo change batching size and hence update the config file's eval loader keys' batch size parameter

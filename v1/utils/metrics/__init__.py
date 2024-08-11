@@ -32,7 +32,8 @@ def build_metric(config):
     from .tabcls_metric import TabClsMetric
     from .cls_metric import ClsMetric
     from .rescore_metric import ReScoreMetric
-    support_dict = ['TabClsMetric', 'F1Metric', 'MapMetric', 'HitMetric', 'MrankMetric', 'ClsMetric', 'ReScoreMetric']
+    from .stp_metric import STPMetric
+    support_dict = ['TabClsMetric', 'F1Metric', 'MapMetric', 'HitMetric', 'MrankMetric', 'ClsMetric', 'ReScoreMetric','STPMetric']
 
     module_classes = {}
     config = copy.deepcopy(config)
