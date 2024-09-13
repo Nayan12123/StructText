@@ -105,16 +105,3 @@ python ./tools/eval_infer.py \
     --image_path ./dataset/testing_data/images/ \
     --weights_path entity_linking_trained_model.pdparams
 ```
-
-
-## Citation
-You can cite the related paper as below:
-```
-@inproceedings{li2021structext,
-  title={StrucTexT: Structured Text Understanding with Multi-Modal Transformers},
-  author={Li, Yulin and Qian, Yuxi and Yu, Yuechen and Qin, Xiameng and Zhang, Chengquan and Liu, Yan and Yao, Kun and Han, Junyu and Liu, Jingtuo and Ding, Errui},
-  booktitle={Proceedings of the 29th ACM International Conference on Multimedia},
-  pages={1912--1920},
-  year={2021}
-}
-```
